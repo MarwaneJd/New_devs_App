@@ -89,6 +89,8 @@ async def cache_invalidation_listener():
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up...")
+    from .core.database_pool import db_pool
+    await db_pool.initialize()
 
     # Initialize Supabase connection pool
     try:
@@ -122,6 +124,9 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Shutting down...")
+    await db_pool.close()
+    from .services.cache import redis_client as revenue_redis
+    await revenue_redis.aclose()
 
     # Shutdown async processor
     await async_processor.shutdown()
@@ -150,8 +155,10 @@ app.add_middleware(
     allow_origins=[
         # Development
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",

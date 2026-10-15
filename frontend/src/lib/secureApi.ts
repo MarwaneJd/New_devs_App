@@ -12,6 +12,7 @@
 import { supabase } from './supabase';
 import { sessionManager } from '../utils/sessionManager';
 import { withRetry, handleApiError, classifyError } from '../utils/apiErrorHandler';
+import { decodeJWTPayload } from '../utils/jwtUtils';
 
 // Get backend URL with fallback for misconfigured production environments
 const getBackendUrl = () => {
@@ -58,6 +59,9 @@ export class SecureAPIClient {
 
   private constructor() {
     this.backendUrl = BACKEND_URL;
+    supabase.auth.onAuthStateChange((_event, session) => {
+      this.setAccessToken(session?.access_token ?? null);
+    });
     this.interceptDirectQueries();
   }
 
@@ -179,18 +183,14 @@ export class SecureAPIClient {
       if (token) {
         let extractedTenantId = null;
 
-        // Handle static local token.
-        if (token === "mock-token-123") {
-          extractedTenantId = "tenant-a";
-        }
-        // Check if it's a valid JWT
-        else if (token.includes('.') && token.split('.').length === 3) {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          extractedTenantId = payload.user_metadata?.tenant_id || payload.tenant_id;
+        // Read server claims for cache scoping; the backend verifies authorization.
+        if (token.includes('.') && token.split('.').length === 3) {
+          const payload = decodeJWTPayload(token);
+          extractedTenantId = payload?.app_metadata?.tenant_id || payload?.tenant_id;
         }
 
         if (extractedTenantId) {
-          // Validate tenant ID format (should be UUID)
+          // Match the text tenant IDs used by the database.
           if (this.isValidTenantId(extractedTenantId)) {
             this.cachedTenantId = extractedTenantId;
             return this.cachedTenantId;
@@ -243,9 +243,8 @@ export class SecureAPIClient {
    * Validate tenant ID format for security
    */
   private isValidTenantId(tenantId: string): boolean {
-    // Check for UUID format (basic validation)
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return typeof tenantId === 'string' && tenantId.length > 0 && uuidRegex.test(tenantId);
+    // The database uses text tenant IDs (including the assignment's tenant-a/b).
+    return typeof tenantId === 'string' && tenantId.length > 0;
   }
 
   /**
@@ -1450,22 +1449,18 @@ export class SecureAPIClient {
 
   // ============= DASHBOARD API =============
   /**
-   * Get dashboard summary with optional simulation header
+   * Get the authenticated tenant's dashboard data.
    */
-  async getDashboardSummary(propertyId: string, options?: { simulatedTenant?: string, timestamp?: number }) {
+  async getDashboardProperties(): Promise<Array<{ id: string; name: string; timezone: string; currencies: string[] }>> {
+    return this.request('/api/v1/dashboard/properties');
+  }
+
+  async getDashboardSummary(propertyId: string, options?: { month?: number; year?: number; currency?: string }) {
     const queryParams = new URLSearchParams({ property_id: propertyId });
-    if (options?.timestamp) {
-      queryParams.append('_t', options.timestamp.toString());
-    }
-
-    const requestOptions: RequestInit = {};
-    if (options?.simulatedTenant) {
-      requestOptions.headers = {
-        'X-Simulated-Tenant': options.simulatedTenant
-      };
-    }
-
-    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
+    if (options?.month !== undefined) queryParams.set('month', String(options.month));
+    if (options?.year !== undefined) queryParams.set('year', String(options.year));
+    if (options?.currency) queryParams.set('currency', options.currency);
+    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`);
   }
 
   async uploadCompanyLogo(logo_url: string) {

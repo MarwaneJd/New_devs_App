@@ -27,7 +27,7 @@ export function decodeJWTPayload(token: string): JWTClaims | null {
     }
 
     // Get the payload (middle part)
-    const payload = parts[1];
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     
     // Add padding if needed for base64 decoding
     const paddedPayload = payload + '=='.substring(0, (4 - (payload.length % 4)) % 4);

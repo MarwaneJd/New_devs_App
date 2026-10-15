@@ -99,18 +99,14 @@ async def login(request: LoginRequest):
                 }
             )
         
-        # For other users, check if they exist in the database
-        # This is a simplified auth - in production you'd check password hashes
+        # Other users must authenticate with the configured identity provider.
         try:
-            # Check if user exists in Supabase auth
-            user_result = supabase.auth.admin.list_users()
-            users = user_result if hasattr(user_result, '__iter__') else []
-            
-            user = None
-            for u in users:
-                if u.email and u.email.lower() == email:
-                    user = u
-                    break
+            # Verify the password; listing users is not authentication.
+            try:
+                auth_result = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                user = auth_result.user
+            except Exception:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
                     
             if not user:
                 logger.warning(f"[LOGIN] User not found: {email}")
@@ -145,6 +141,12 @@ async def login(request: LoginRequest):
             
             # Resolve tenant ID
             tenant_id = await TenantResolver.resolve_tenant_id(user_id=user.id, user_email=user.email)
+            if not tenant_id:
+                tenant_id = TenantResolver.resolve_tenant_from_user({
+                    "app_metadata": getattr(user, "app_metadata", {}) or {},
+                })
+            if not tenant_id:
+                raise HTTPException(status_code=403, detail="Tenant context is required")
             
             # Create JWT token
             user_data = {
@@ -152,6 +154,7 @@ async def login(request: LoginRequest):
                 "email": user.email,
                 "is_admin": is_admin,
                 "tenant_id": tenant_id,
+                "app_metadata": {"tenant_id": tenant_id, "role": "admin" if is_admin else "user"},
                 "exp": datetime.utcnow() + timedelta(hours=24),
                 "aud": "authenticated"
             }

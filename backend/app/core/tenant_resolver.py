@@ -21,13 +21,7 @@ class TenantResolver:
         Returns:
             Tenant ID if found, None otherwise
         """
-        # Try user_metadata first (most common location)
-        if 'user_metadata' in token_payload:
-            tenant_id = token_payload['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        # Try app_metadata as fallback
+        # Only server-controlled claims can grant tenant access.
         if 'app_metadata' in token_payload:
             tenant_id = token_payload['app_metadata'].get('tenant_id')
             if tenant_id:
@@ -53,13 +47,8 @@ class TenantResolver:
             Tenant ID if found, None otherwise
         """
         # Check various possible locations
-        if 'tenant_id' in user_data:
+        if user_data.get('tenant_id'):
             return user_data['tenant_id']
-
-        if 'user_metadata' in user_data:
-            tenant_id = user_data['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
 
         if 'app_metadata' in user_data:
             tenant_id = user_data['app_metadata'].get('tenant_id')
@@ -69,7 +58,7 @@ class TenantResolver:
         return None
 
     @staticmethod
-    async def resolve_tenant_id(user_id: str, user_email: str, token: Optional[str] = None) -> str:
+    async def resolve_tenant_id(user_id: str, user_email: str, token: Optional[str] = None) -> Optional[str]:
         """
         Resolve tenant ID for a user.
         
@@ -80,7 +69,17 @@ class TenantResolver:
         Returns:
             Tenant ID
         """
-        # Fallback mapping by known user email.
+        if token:
+            from jose import jwt, JWTError
+            from app.config import settings
+            try:
+                payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"],
+                                     audience="authenticated", options={"require_exp": True})
+                return TenantResolver.resolve_tenant_from_token(payload)
+            except JWTError:
+                return None
+
+        # Explicit challenge accounts only. Unknown users must not inherit tenant A.
         if user_email == "sunset@propertyflow.com":
             return "tenant-a"
         if user_email == "ocean@propertyflow.com":
@@ -88,8 +87,7 @@ class TenantResolver:
         if user_email == "candidate@propertyflow.com":
             return "tenant-a"
             
-        # Default fallback
-        return "tenant-a"
+        return None
 
     @staticmethod
     async def update_user_tenant_metadata(user_id: str, tenant_id: str) -> None:

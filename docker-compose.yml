@@ -22,7 +22,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:80" # Mapping internal 80 (nginx) to 3000
+      - "${FRONTEND_PORT:-3000}:80"
     environment:
       - VITE_API_URL=http://localhost:8000
     depends_on:
